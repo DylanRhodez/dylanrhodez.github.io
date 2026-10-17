@@ -1,0 +1,27 @@
+<!DOCTYPE HTML>
+<button id="show-play" aria-expanded="false" aria-controls="snake-panel">Games</button>
+
+<div id="snake-panel" hidden>
+  <button id="load-game">Load SIMPLE SNAKE</button>
+  <iframe id="game-frame" title="SIMPLE SNAKE" width="640" height="640" hidden></iframe>
+</div>
+
+<script>
+  const showBtn = document.getElementById("show-play");
+  const panel = document.getElementById("snake-panel");
+  const loadBtn = document.getElementById("load-game");
+  const frame = document.getElementById("game-frame");
+
+  showBtn.addEventListener("click", () => {
+    panel.hidden = false;
+    showBtn.setAttribute("aria-expanded", "true");
+  });
+
+  loadBtn.addEventListener("click", () => {
+    frame.src = "snake/";          // path to your snake folder
+    frame.hidden = false;
+    loadBtn.hidden = true;
+    // Give the game keyboard focus so typing works without another click
+    frame.addEventListener("load", () => frame.contentWindow.focus(), { once: true });
+  });
+</script>
