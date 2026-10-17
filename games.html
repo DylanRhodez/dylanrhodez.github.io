@@ -1,8 +1,27 @@
 <!DOCTYPE HTML>
-<button id="show-play" aria-expanded="false" aria-controls="snake-panel">Games</button>
+<style>
+  .snake-btn {
+    font-size: 1.4rem;
+    font-weight: bold;
+    padding: 18px 36px;
+    margin: 6px 6px 6px 0;
+    cursor: pointer;
+  }
+  #snake-info { max-width: 40rem; margin: 12px 0; }
+</style>
+
+<button id="show-play" class="snake-btn" aria-expanded="false" aria-controls="snake-panel">SIMPLE SNAKE</button>
 
 <div id="snake-panel" hidden>
-  <button id="load-game">Load SIMPLE SNAKE</button>
+  <button id="load-game" class="snake-btn">LOAD SIMPLE SNAKE</button>
+  <button id="show-info" class="snake-btn" aria-expanded="false" aria-controls="snake-info">GAME INFO</button>
+
+  <div id="snake-info" hidden>
+    <p>SIMPLE SNAKE is a classic snake game by Dylan Rhodez. Eat the food to grow and score points, and avoid the walls and your own tail.</p>
+    <p>Controls: arrow keys or W, A, S, D to move, and Space to pause. Hold the key for your direction to boost. You can change the speed and boost in the game's Settings.</p>
+    <p>Version 1.0 (2026/10/17). Needs a keyboard, so it isn't playable on phones.</p>
+  </div>
+
   <iframe id="game-frame" title="SIMPLE SNAKE" width="640" height="640" hidden></iframe>
 </div>
 
@@ -10,6 +29,8 @@
   const showBtn = document.getElementById("show-play");
   const panel = document.getElementById("snake-panel");
   const loadBtn = document.getElementById("load-game");
+  const infoBtn = document.getElementById("show-info");
+  const info = document.getElementById("snake-info");
   const frame = document.getElementById("game-frame");
 
   showBtn.addEventListener("click", () => {
@@ -17,11 +38,15 @@
     showBtn.setAttribute("aria-expanded", "true");
   });
 
+  infoBtn.addEventListener("click", () => {
+    info.hidden = !info.hidden;
+    infoBtn.setAttribute("aria-expanded", String(!info.hidden));
+  });
+
   loadBtn.addEventListener("click", () => {
     frame.src = "snake/";          // path to your snake folder
     frame.hidden = false;
     loadBtn.hidden = true;
-    // Give the game keyboard focus so typing works without another click
     frame.addEventListener("load", () => frame.contentWindow.focus(), { once: true });
   });
 </script>
