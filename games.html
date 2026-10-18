@@ -50,3 +50,63 @@
     frame.addEventListener("load", () => frame.contentWindow.focus(), { once: true });
   });
 </script>
+
+<style>
+  .snake-btn {
+    font-size: 1.4rem;
+    font-weight: bold;
+    padding: 18px 36px;
+    margin: 6px 6px 6px 0;
+    cursor: pointer;
+  }
+  #snake-info-m { max-width: 40rem; margin: 12px 0; }
+  #game-frame-m {
+    width: 100%;
+    max-width: 480px;
+    height: 860px;
+    height: min(860px, 100dvh);
+    border: 0;
+  }
+</style>
+
+<button id="show-play-m" class="snake-btn" aria-expanded="false" aria-controls="snake-panel-m">SIMPLE SNAKE (MOBILE)</button>
+
+<div id="snake-panel-m" hidden>
+  <button id="load-game-m" class="snake-btn">LOAD SIMPLE SNAKE (MOBILE)</button>
+  <button id="show-info-m" class="snake-btn" aria-expanded="false" aria-controls="snake-info-m">GAME INFO</button>
+
+  <div id="snake-info-m" hidden>
+    <p>SIMPLE SNAKE is a classic snake game by Dylan Rhodez. Eat the food to grow and score points, and avoid the walls and your own tail.</p>
+    <p>Controls: tap the arrow buttons to move and hold BOOST to speed up. On a keyboard, arrow keys or W, A, S, D also work, and Space pauses. You can change the speed and boost in the game's Settings.</p>
+    <p>Version 1.0 (2026/10/17). Made for phones and tablets, with a bigger window and on-screen buttons.</p>
+  </div>
+
+  <iframe id="game-frame-m" title="SIMPLE SNAKE (Mobile)" hidden></iframe>
+</div>
+
+<script>
+  const showBtnM = document.getElementById("show-play-m");
+  const panelM = document.getElementById("snake-panel-m");
+  const loadBtnM = document.getElementById("load-game-m");
+  const infoBtnM = document.getElementById("show-info-m");
+  const infoM = document.getElementById("snake-info-m");
+  const frameM = document.getElementById("game-frame-m");
+
+  showBtnM.addEventListener("click", () => {
+    panelM.hidden = false;
+    showBtnM.setAttribute("aria-expanded", "true");
+  });
+
+  infoBtnM.addEventListener("click", () => {
+    infoM.hidden = !infoM.hidden;
+    infoBtnM.setAttribute("aria-expanded", String(!infoM.hidden));
+  });
+
+  loadBtnM.addEventListener("click", () => {
+    frameM.src = "snake/SSM.html";   // path to your snake-mobile folder
+    frameM.hidden = false;
+    loadBtnM.hidden = true;
+    frameM.addEventListener("load", () => frameM.contentWindow.focus(), { once: true });
+  });
+</script>
+
