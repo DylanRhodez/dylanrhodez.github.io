@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SIMPLE MINESWEEPER</title>
+<style>
+  html, body { margin:0; height:100%; background:#000; overflow:hidden; }
+  body { display:flex; align-items:center; justify-content:center; }
+  canvas {
+    width:min(100vw, 100vh); height:min(100vw, 100vh);
+    background:#000; touch-action:none;
+    -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+    image-rendering:auto;
+  }
+  #kb { position:fixed; left:0; top:0; width:1px; height:1px; opacity:0; border:0; padding:0; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1200" height="1200" aria-label="SIMPLE MINESWEEPER"></canvas>
+<input id="kb" type="text" maxlength="40" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="terminal input">
+
+<script>
+"use strict";
+/* ============ Port of SIMPLE-MINESWEEPER6.py (turtle) to HTML canvas ============ */
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+const kb = document.getElementById("kb");
+const W = 600, DPR = cv.width / W;
+ctx.scale(DPR, DPR);
+const X = x => W / 2 + x;       // game x -> canvas x
+const Y = y => W / 2 - y;       // game y (up) -> canvas y (down)
+
+const CREDITS = [
+  "Dylan Rhodez, coded with the following resources > Claude Ai, w3schools.com, docs.python-guide.org",
+  "Thank you for visiting my site, and thank you for playing!",
+];
+const CONTROLS = [
+  ["Reveal", "Left click a square. Your first click is always safe."],
+  ["Flag", "Right click a square (or long press on touch), or turn on FLAG mode with the button at the top left, then left click."],
+  ["Pause", "Press Space or click PAUSE. Press Space again while paused to quit to the menu."],
+];
+
+const CELL = 30, BOUND = 280, TOP_BOUND = 220;
+const MIN_SIZE = 6, MAX_SIZE = 16, MIN_MINES = 1, DEFAULT_SIZE = 9, DEFAULT_MINES = 10;
+const BAR_H = 20;
+const CORNERS = [["TOP-LEFT", "nw"], ["TOP-RIGHT", "ne"], ["BTM-LEFT", "sw"], ["BTM-RIGHT", "se"]];
+const NUM_COLORS = { 1:"#00bfff", 2:"#00ff00", 3:"#ff0000", 4:"#ee82ee", 5:"#ffa500", 6:"#00ffff", 7:"#ffffff", 8:"#808080" };
+
+let size_level = DEFAULT_SIZE, mine_level = DEFAULT_MINES;
+let state = "terminal";           // terminal, menu, options, credits, controls, dev, playing, over
+let paused = false, game_id = 0;
+let title_clicks = 0, dev_unlocked = false;
+let show_mines = false, limit_override = false;
+let hover_grid = false, hover_size = 3, hover_number = false, hover_corner = 0;
+let stats_on = false, stats_corner = 1, stats_lines = [];
+let pointer_on = false;
+let mouse_x = null, mouse_y = null;
+let ptr_pos = null, ptr_prev = null, ptr_t = 0, ptr_dx = 0, ptr_dy = 0, ptr_xv = 0, ptr_yv = 0;
+let ptr_down = false, ptr_trail = [], ptr_gen = 0;
+let menu_msg = null;
+const best_times = {};
+
+let n = DEFAULT_SIZE, total_mines = DEFAULT_MINES;
+let mine = [], count = [], revealed = [], flagged = [];
+let boardActive = false;
+let first_click = true, flag_mode = false, elapsed = 0, flags = 0, revealed_count = 0;
+let lost = false, hit = null, over_msg = "";
+
+let buttons = [];                 // {x1,y1,x2,y2,cb,label}
+let pressedKey = null, click_lock = false;
+
+const max_mines = () => limit_override ? size_level * size_level - 9 : Math.floor(size_level * size_level / 3);
+const hover_max_size = () => Math.max(1, Math.floor(size_level / 2));
+function apply_limits() {
+  size_level = Math.max(MIN_SIZE, Math.min(MAX_SIZE, size_level));
+  mine_level = Math.max(MIN_MINES, Math.min(max_mines(), mine_level));
+  hover_size = Math.max(1, Math.min(hover_max_size(), hover_size));
+}
+
+/* ---------------- drawing helpers ---------------- */
+const font = (pt, style = "bold") => `${style} ${Math.round(pt * 4 / 3)}px "Courier New", Courier, monospace`;
+
+function text(msg, x, y, size = 18, color = "white", style = "bold", align = "center") {
+  ctx.font = font(size, style);
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(msg, X(x), Y(y));
+}
+function ctext(msg, x, y, size, color, style = "bold") {      // centered both ways (canvas create_text)
+  ctx.font = font(size, style);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(msg, X(x), Y(y));
+}
+function rect(x1, y1, x2, y2, fill, stroke, lw) {              // y1 = bottom, y2 = top (game coords)
+  ctx.beginPath();
+  ctx.rect(X(x1), Y(y2), x2 - x1, y2 - y1);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function wrap(s, w) {
+  const out = []; let cur = "";
+  for (const word of s.split(" ")) {
+    if (cur && cur.length + 1 + word.length > w) { out.push(cur); cur = word; }
+    else cur = cur ? cur + " " + word : word;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+function button(label, cx, cy, cb, w = 200, h = 50) {
+  const x1 = cx - w / 2, y1 = cy - h / 2, x2 = cx + w / 2, y2 = cy + h / 2;
+  const key = label + "|" + cx + "|" + cy;
+  const pressed = pressedKey === key;
+  rect(x1, y1, x2, y2, pressed ? "#4a90e2" : "#1e3a5f", pressed ? "yellow" : "white", 3);
+  text(label, cx, cy - 12, 18);
+  buttons.push({ x1, y1, x2, y2, cb, label, key });
+}
+
+/* ---------------- screens ---------------- */
+function drawBorder() {
+  ctx.strokeStyle = "#00bfff"; ctx.lineWidth = 6;
+  ctx.strokeRect(X(-BOUND - 10), Y(BOUND + 10), 2 * BOUND + 20, 2 * BOUND + 20);
+  ctx.beginPath();
+  ctx.moveTo(X(-BOUND - 10), Y(TOP_BOUND + 10));
+  ctx.lineTo(X(BOUND + 10), Y(TOP_BOUND + 10));
+  ctx.stroke();
+}
+
+function drawMenu() {
+  text("SIMPLE MINESWEEPER", 0, 150, 30, "#00ff00");
+  buttons.push({ x1:-200, y1:140, x2:200, y2:200, cb:title_click, label:null });
+  if (menu_msg) text(menu_msg, 0, 100, 16, "yellow");
+  button("START", 0, 50, start_game);
+  button("SETTINGS", 0, -20, show_options);
+  button("CONTROLS", 0, -90, show_controls);
+  button("CREDITS", 0, -160, show_credits);
+  if (dev_unlocked) button("DEV SETTINGS", 0, -230, show_dev_settings);
+  else if (title_clicks >= 10) text(`${20 - title_clicks} clicks until dev settings`, 0, -245, 16, "yellow");
+  text("Ver. 1.0 - 2026/10/18", -275, -282, 9, "gray", "normal", "left");
+  text("Simple Minesweeper by Dylan Rhodez", 0, -282, 9, "gray", "normal");
+  text("PUBLIC", 275, -282, 9, "gray", "normal", "right");
+}
+
+function drawOptions() {
+  text("SETTINGS", 0, 190, 32, "#00ff00");
+  const best = best_times[size_level + "," + mine_level];
+  text(best ? `Best time: ${best}s` : "Best time: --", 0, 158, 14, "gray", "normal");
+  text(`Board: ${size_level}x${size_level}`, 0, 115, 22);
+  button("-  Smaller", -90, 70, () => { size_level -= 1; apply_limits(); }, 160);
+  button("Bigger  +", 90, 70, () => { size_level += 1; apply_limits(); }, 160);
+  text(`Mines: ${mine_level} (max ${max_mines()})`, 0, 0, 22);
+  button("-  Fewer", -90, -50, () => { mine_level -= 1; apply_limits(); }, 160);
+  button("More  +", 90, -50, () => { mine_level += 1; apply_limits(); }, 160);
+  button("RESET DEFAULTS", 0, -115, () => { size_level = DEFAULT_SIZE; mine_level = DEFAULT_MINES; }, 240);
+  button("BACK", 0, -180, show_menu);
+}
+
+function drawCredits() {
+  text("CREDITS", 0, 190, 32, "#00ff00");
+  let y = 130;
+  for (const p of CREDITS) {
+    for (const line of wrap(p, 40)) { text(line, 0, y, 14, "white", "normal"); y -= 24; }
+    y -= 14;
+  }
+  button("BACK", 0, -180, show_menu);
+}
+
+function drawControls() {
+  text("CONTROLS", 0, 190, 32, "#00ff00");
+  let y = 140;
+  for (const [label, desc] of CONTROLS) {
+    text(label, 0, y, 16, "#00ff00"); y -= 24;
+    for (const line of wrap(desc, 40)) { text(line, 0, y, 14, "white", "normal"); y -= 24; }
+    y -= 14;
+  }
+  button("BACK", 0, -180, show_menu);
+}
+
+function drawDev() {
+  text("DEV SETTINGS", 0, 190, 28, "#00ff00");
+  const on = f => f ? "ON" : "OFF";
+  let y = 140;
+  const add = (label, cb) => { button(label, 0, y, cb, 360, 36); y -= 40; };
+  add(`SHOW MINES: ${on(show_mines)}`, () => { show_mines = !show_mines; });
+  add(`LIMIT OVERRIDE: ${on(limit_override)}`, () => { limit_override = !limit_override; apply_limits(); });
+  add(`HOVER GRID: ${on(hover_grid)}`, () => { hover_grid = !hover_grid; });
+  if (hover_grid) {
+    button("-", -150, y, () => { hover_size -= 1; apply_limits(); }, 60, 36);
+    text(`SIZE: ${hover_size}x${hover_size} (max ${hover_max_size()})`, 0, y - 11, 16);
+    button("+", 150, y, () => { hover_size += 1; apply_limits(); }, 60, 36);
+    y -= 40;
+    add(`HOVER NUMBER: ${on(hover_number)}`, () => { hover_number = !hover_number; });
+    if (hover_number) add(`NUMBER CORNER: ${CORNERS[hover_corner][0]}`, () => { hover_corner = (hover_corner + 1) % 4; });
+  }
+  add(`POINTER LOCATION: ${on(pointer_on)}`, toggle_pointer);
+  add(`STATS: ${on(stats_on)}`, toggle_stats);
+  if (stats_on) add(`STATS CORNER: ${CORNERS[stats_corner][0]}`, () => { stats_corner = (stats_corner + 1) % 4; });
+  button("BACK", 0, -240, show_menu, 200, 36);
+}
+
+/* ---------------- board ---------------- */
+const board_x0 = () => -n * CELL / 2;
+const board_top = () => -30 + n * CELL / 2;
+function cell_box(r, c) {
+  const x1 = board_x0() + c * CELL, y2 = board_top() - r * CELL;
+  return [x1, y2 - CELL, x1 + CELL, y2];
+}
+function* neighbors(r, c) {
+  for (let dr = -1; dr <= 1; dr++)
+    for (let dc = -1; dc <= 1; dc++) {
+      const rr = r + dr, cc = c + dc;
+      if ((dr || dc) && rr >= 0 && rr < n && cc >= 0 && cc < n) yield [rr, cc];
+    }
+}
+function drawCell(r, c) {
+  const [x1, y1, x2, y2] = cell_box(r, c);
+  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  const bomb = () => {
+    ctx.beginPath(); ctx.arc(X(cx), Y(cy), 8, 0, Math.PI * 2);
+    ctx.fillStyle = "#000"; ctx.fill(); ctx.strokeStyle = "red"; ctx.lineWidth = 3; ctx.stroke();
+  };
+  if (revealed[r][c]) {
+    rect(x1, y1, x2, y2, "#0d1b2a", "#1e3a5f", 2);
+    if (count[r][c]) ctext(String(count[r][c]), cx, cy, 16, NUM_COLORS[count[r][c]]);
+  } else if (lost && mine[r][c] && !flagged[r][c]) {
+    rect(x1, y1, x2, y2, hit && hit[0] === r && hit[1] === c ? "#7f0000" : "#0d1b2a", "#1e3a5f", 2);
+    bomb();
+  } else if (lost && flagged[r][c] && !mine[r][c]) {
+    rect(x1, y1, x2, y2, "#1e3a5f", "#0d1b2a", 2);
+    ctext("X", cx, cy, 16, "orange");
+  } else if (flagged[r][c]) {
+    rect(x1, y1, x2, y2, "#1e3a5f", "#0d1b2a", 2);
+    ctext("F", cx, cy, 16, "red");
+  } else {
+    rect(x1, y1, x2, y2, "#1e3a5f", "#0d1b2a", 2);
+    if (show_mines && mine[r][c]) {
+      ctx.beginPath(); ctx.arc(X(cx), Y(cy), 3, 0, Math.PI * 2);
+      ctx.fillStyle = "cyan"; ctx.fill();
+    }
+  }
+}
+
+function drawGame() {
+  // HUD text
+  if (state === "over") text(over_msg, 0, 250, 16, "white", "bold");
+  else text(`Mines: ${total_mines - flags}  Time: ${elapsed}`, 0, 250, 16, "white", "normal");
+  // board
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) drawCell(r, c);
+  // HUD buttons / pause window
+  if (state === "over") {
+    button("RETRY", -215, 260, start_game, 110, 36);
+    button("MENU", 215, 260, back_to_menu, 110, 36);
+  } else if (!paused) {
+    button(`FLAG: ${flag_mode ? "ON" : "OFF"}`, -205, 260, toggle_flag_mode, 130, 36);
+    button("PAUSE", 215, 260, toggle_pause, 110, 36);
+  } else {
+    rect(-150, -120, 150, 100, "#0d1b2a", "yellow", 4);
+    ctext("PAUSED", 0, 65, 28, "yellow");
+    button("QUIT TO MENU", 0, 5, quit_to_menu, 220, 50);
+    button("RESUME", 0, -65, toggle_pause, 220, 50);
+    ctext("SPACE again = quit to menu", 0, -105, 10, "gray", "normal");
+  }
+}
+
+/* ---------------- dev overlays ---------------- */
+function hoverActive() { return hover_grid && (state === "playing" || state === "over") && !paused && boardActive; }
+function cell_at(x, y) {
+  if (x === null) return null;
+  const c = Math.floor((x - board_x0()) / CELL);
+  const r = Math.floor((board_top() - y) / CELL);
+  return r >= 0 && r < n && c >= 0 && c < n ? [r, c] : null;
+}
+
+let hover_cell = null;
+function drawHover() {
+  hover_cell = hoverActive() ? cell_at(mouse_x, mouse_y) : null;
+  if (!hover_cell) return;
+  const [r0, c0] = hover_cell;
+  const k = Math.max(1, Math.min(hover_size, Math.floor(n / 2)));
+  const lo = Math.floor((k - 1) / 2), hi = Math.floor(k / 2);
+  const rLo = Math.max(0, r0 - lo), rHi = Math.min(n - 1, r0 + hi);
+  const cLo = Math.max(0, c0 - lo), cHi = Math.min(n - 1, c0 + hi);
+  for (let r = rLo; r <= rHi; r++)
+    for (let c = cLo; c <= cHi; c++) {
+      const [x1, y1, x2, y2] = cell_box(r, c);
+      const lit = r === r0 && c === c0;
+      rect(x1, y1, x2, y2, null, lit ? "white" : "yellow", lit ? 3 : 2);
+    }
+  const [ax1, ay1] = cell_box(rHi, cLo);
+  const [, , bx2, by2] = cell_box(rLo, cHi);
+  rect(ax1, ay1, bx2, by2, null, "cyan", 3);
+}
+
+function hoverInfoLines() {
+  if (!(hoverActive() && hover_number)) return null;
+  if (!hover_cell) return ["Cell: --"];
+  const [r, c] = hover_cell;
+  if (first_click) return [`Cell: R${r + 1} C${c + 1}`, "Number: --", "(no mines yet)"];
+  return [`Cell: R${r + 1} C${c + 1}`, mine[r][c] ? "Number: MINE" : `Number: ${count[r][c]}`];
+}
+
+function drawPointer() {
+  if (!pointer_on || mouse_x === null) return;
+  const edge = BOUND + 7;
+  ctx.strokeStyle = "gray"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(X(-edge), Y(mouse_y)); ctx.lineTo(X(edge), Y(mouse_y));
+  ctx.moveTo(X(mouse_x), Y(-edge)); ctx.lineTo(X(mouse_x), Y(edge));
+  ctx.stroke();
+  if (ptr_trail.length > 1) {
+    ctx.strokeStyle = "#00ff00"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ptr_trail.forEach(([px, py], i) => i ? ctx.lineTo(X(px), Y(py)) : ctx.moveTo(X(px), Y(py)));
+    ctx.stroke();
+  }
+}
+
+function drawOverlays() {
+  if (pointer_on) {
+    const top = TOP_BOUND + 4;
+    rect(-(BOUND + 4), top - (BAR_H - 2), BOUND + 4, top, "#000", "gray", 1);
+    const inside = mouse_x !== null;
+    const [x, y] = ptr_pos || [null, null];
+    const xs = x !== null ? x.toFixed(1) : "--", ys = y !== null ? y.toFixed(1) : "--";
+    const msg = `P:${inside ? 1 : 0}/1 X:${xs} Y:${ys} dX:${ptr_dx.toFixed(1)} dY:${ptr_dy.toFixed(1)} ` +
+                `Xv:${ptr_xv.toFixed(1)} Yv:${ptr_yv.toFixed(1)} Prs:${ptr_down ? "1.0" : "0.0"}`;
+    ctx.font = font(10); ctx.fillStyle = "white"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(msg, X(-(BOUND + 1)), Y(top - (BAR_H - 2) / 2));
+  }
+  const blocks = [];
+  const info = hoverInfoLines();
+  if (info) blocks.push([hover_corner, info, "#00ff00"]);
+  if (stats_on && stats_lines.length) blocks.push([stats_corner, stats_lines, "yellow"]);
+  const used = {};
+  for (const [corner, lines, color] of blocks) {
+    const anchor = CORNERS[corner][1];
+    const left = anchor[1] === "w", topA = anchor[0] === "n";
+    const off = used[corner] || 0;
+    const bar = pointer_on ? BAR_H : 0;
+    ctx.font = font(10);
+    const w = Math.max(...lines.map(l => ctx.measureText(l).width));
+    const h = lines.length * 15;
+    const gx = left ? -(BOUND + 4) : BOUND + 4;
+    const gy = topA ? (TOP_BOUND + 4) - off - bar : -(BOUND + 4) + off;
+    const x0 = left ? X(gx) : X(gx) - w;
+    const yTop = topA ? Y(gy) : Y(gy) - h;
+    ctx.fillStyle = "#000"; ctx.strokeStyle = "gray"; ctx.lineWidth = 1;
+    ctx.fillRect(x0 - 3, yTop - 2, w + 6, h + 4);
+    ctx.strokeRect(x0 - 3, yTop - 2, w + 6, h + 4);
+    ctx.fillStyle = color; ctx.textBaseline = "top";
+    ctx.textAlign = left ? "left" : "right";
+    lines.forEach((l, i) => ctx.fillText(l, left ? x0 : x0 + w, yTop + i * 15));
+    used[corner] = off + h + 8;
+  }
+}
+
+/* ---------------- terminal ---------------- */
+let term_lines = [], term_input = "", term_busy = false;
+function term_print(msg, color = "#00ff00") { term_lines.push([msg, color]); term_lines = term_lines.slice(-18); }
+function drawTerminal() {
+  let y = 250;
+  for (const [msg, color] of term_lines) { text(msg, -270, y, 14, color, "normal", "left"); y -= 24; }
+  if (!term_busy) text("> " + term_input + "_", -270, y, 14, "#00ff00", "normal", "left");
+}
+function show_terminal() {
+  state = "terminal"; term_lines = [];
+  term_print("SIMPLE MINESWEEPER TERMINAL"); term_print("");
+}
+function launch_game() { term_busy = false; kb.blur(); show_menu(); }
+function term_submit() {
+  const cmd = term_input; term_input = ""; kb.value = "";
+  term_print("> " + cmd, "white");
+  const word = cmd.trim().toLowerCase().replace(/[!. ]+$/, "");
+  if (!word) return;
+  if (word === "run") {
+    term_print("LOADING SIMPLE MINESWEEPER");
+    term_busy = true;
+    setTimeout(() => { launch_game(); invalidate(); }, 1200);
+  } else if (word === "help") term_print("Type RUN to run the game!");
+  else term_print("ERROR! Type 'help' to show help.", "red");
+}
+kb.addEventListener("input", () => { if (state === "terminal" && !term_busy) { term_input = kb.value; invalidate(); } });
+kb.addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); if (state === "terminal" && !term_busy) { term_submit(); invalidate(); } }
+});
+
+/* ---------------- menu navigation ---------------- */
+function show_menu(message = null) { state = "menu"; menu_msg = message; }
+function show_options() { state = "options"; }
+function show_credits() { state = "credits"; }
+function show_controls() { state = "controls"; }
+function show_dev_settings() { state = "dev"; }
+function title_click() {
+  if (dev_unlocked) return;
+  title_clicks++;
+  if (title_clicks >= 20) { dev_unlocked = true; show_menu("Developer settings unlocked!"); }
+  else show_menu(menu_msg);
+}
+
+/* ---------------- game logic ---------------- */
+function start_game() {
+  apply_limits();
+  n = size_level; total_mines = mine_level;
+  const grid = v => Array.from({ length: n }, () => Array(n).fill(v));
+  mine = grid(false); count = grid(0); revealed = grid(false); flagged = grid(false);
+  boardActive = true;
+  state = "playing"; paused = false; game_id++;
+  first_click = true; flag_mode = false; elapsed = 0; flags = 0; revealed_count = 0;
+  lost = false; hit = null;
+  tick(game_id);
+}
+function back_to_menu() { paused = false; boardActive = false; show_menu(); }
+function quit_to_menu() { if (state === "playing" && paused) back_to_menu(); }
+function toggle_flag_mode() { if (state === "playing") flag_mode = !flag_mode; }
+function toggle_pause() { if (state === "playing") paused = !paused; }
+function tick(gid) {
+  if (gid !== game_id || state !== "playing") return;
+  if (!paused && !first_click) { elapsed++; invalidate(); }
+  setTimeout(() => tick(gid), 1000);
+}
+
+function place_mines(sr, sc) {
+  const safe = new Set([sr + "," + sc]);
+  for (const [r, c] of neighbors(sr, sc)) safe.add(r + "," + c);
+  let spots = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (!safe.has(r + "," + c)) spots.push([r, c]);
+  if (spots.length < total_mines) {
+    spots = [];
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (!(r === sr && c === sc)) spots.push([r, c]);
+  }
+  for (let i = spots.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [spots[i], spots[j]] = [spots[j], spots[i]];
+  }
+  spots.slice(0, total_mines).forEach(([r, c]) => { mine[r][c] = true; });
+  for (let r = 0; r < n; r++)
+    for (let c = 0; c < n; c++)
+      count[r][c] = [...neighbors(r, c)].filter(([a, b]) => mine[a][b]).length;
+}
+
+function board_click(x, y, flag) {
+  const cell = cell_at(x, y);
+  if (!cell) return;
+  flag ? toggle_flag(cell[0], cell[1]) : reveal(cell[0], cell[1]);
+}
+function toggle_flag(r, c) {
+  if (revealed[r][c]) return;
+  if (!flagged[r][c] && flags >= total_mines && !limit_override) return;
+  flagged[r][c] = !flagged[r][c];
+  flags += flagged[r][c] ? 1 : -1;
+}
+function reveal(r, c) {
+  if (revealed[r][c] || flagged[r][c]) return;
+  if (first_click) { place_mines(r, c); first_click = false; }
+  if (mine[r][c]) return lose(r, c);
+  const stack = [[r, c]];
+  while (stack.length) {
+    const [cr, cc] = stack.pop();
+    if (revealed[cr][cc] || flagged[cr][cc]) continue;
+    revealed[cr][cc] = true; revealed_count++;
+    if (count[cr][cc] === 0) for (const nb of neighbors(cr, cc)) stack.push(nb);
+  }
+  if (revealed_count === n * n - total_mines) win();
+}
+function lose(r, c) { lost = true; hit = [r, c]; state = "over"; over_msg = "BOOM! Game over"; }
+function win() {
+  state = "over";
+  const key = size_level + "," + mine_level;
+  if (best_times[key] === undefined || elapsed < best_times[key]) {
+    best_times[key] = elapsed; over_msg = `You win! ${elapsed}s - NEW BEST!`;
+  } else over_msg = `You win! ${elapsed}s`;
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (mine[r][c]) flagged[r][c] = true;
+  flags = total_mines;
+}
+
+/* ---------------- dev: pointer + stats ---------------- */
+function toggle_pointer() {
+  pointer_on = !pointer_on;
+  ptr_trail = []; ptr_prev = null; ptr_xv = ptr_yv = ptr_dx = ptr_dy = 0;
+}
+function update_pointer() {
+  const now = performance.now() / 1000;
+  const pos = [mouse_x, mouse_y];
+  if (ptr_prev) {
+    ptr_dx = pos[0] - ptr_prev[0]; ptr_dy = pos[1] - ptr_prev[1];
+    const dt = Math.max(now - ptr_t, 1e-3);
+    ptr_xv = 0.5 * ptr_xv + 0.5 * ptr_dx / dt;
+    ptr_yv = 0.5 * ptr_yv + 0.5 * ptr_dy / dt;
+  }
+  ptr_prev = pos; ptr_pos = pos; ptr_t = now;
+  ptr_trail.push(pos); ptr_trail = ptr_trail.slice(-120);
+  const gen = ++ptr_gen;
+  setTimeout(() => { if (gen === ptr_gen && pointer_on && (ptr_xv || ptr_yv)) { ptr_xv = ptr_yv = 0; invalidate(); } }, 100);
+}
+
+let frames = 0, frameMsSum = 0, lastStats = performance.now();
+function toggle_stats() {
+  stats_on = !stats_on;
+  stats_lines = stats_on ? ["FPS: --", "FRAME: --", "MEM: --"] : [];
+  frames = 0; frameMsSum = 0; lastStats = performance.now();
+}
+function statsTick(now) {
+  if (!stats_on) return;
+  const dt = now - lastStats;
+  if (dt >= 500) {
+    const fps = frames / (dt / 1000);
+    const ms = frames ? frameMsSum / frames : 0;
+    const mem = performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null;
+    stats_lines = [`FPS: ${fps.toFixed(0)}`, `FRAME: ${ms.toFixed(2)} ms`,
+                   mem !== null ? `MEM: ${mem.toFixed(1)} MB` : "MEM: n/a"];
+    frames = 0; frameMsSum = 0; lastStats = now;
+  }
+}
+
+/* ---------------- render loop ---------------- */
+let dirty = true;
+function invalidate() { dirty = true; }
+function render() {
+  buttons = [];
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, W);
+  if (state === "terminal") drawTerminal();
+  else {
+    drawBorder();
+    if (state === "menu") drawMenu();
+    else if (state === "options") drawOptions();
+    else if (state === "credits") drawCredits();
+    else if (state === "controls") drawControls();
+    else if (state === "dev") drawDev();
+    else if (state === "playing" || state === "over") drawGame();
+  }
+  drawHover(); drawPointer(); drawOverlays();
+}
+function loop(now) {
+  if (stats_on) {
+    statsTick(now);
+    const t0 = performance.now();
+    render();
+    frameMsSum += performance.now() - t0; frames++;
+    dirty = false;
+  } else if (dirty) { dirty = false; render(); }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ---------------- input ---------------- */
+function toGame(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) / r.width * W - W / 2, W / 2 - (e.clientY - r.top) / r.height * W];
+}
+function on_click(x, y) {
+  for (const b of buttons) {
+    if (x >= b.x1 && x <= b.x2 && y >= b.y1 && y <= b.y2) {
+      if (b.label === null) { b.cb(); invalidate(); return; }
+      if (click_lock) return;
+      click_lock = true; pressedKey = b.key; invalidate();
+      setTimeout(() => { pressedKey = null; click_lock = false; b.cb(); invalidate(); }, 100);
+      return;
+    }
+  }
+  if (state === "playing" && !paused) { board_click(x, y, flag_mode); invalidate(); }
+}
+
+let lastPointerType = "mouse", longTimer = null, longFired = false;
+cv.addEventListener("pointerdown", e => {
+  lastPointerType = e.pointerType;
+  ptr_down = true; longFired = false;
+  const [x, y] = toGame(e);
+  mouse_x = x; mouse_y = y;
+  if (e.pointerType !== "mouse" && state === "playing" && !paused) {
+    clearTimeout(longTimer);
+    longTimer = setTimeout(() => {
+      if (state === "playing" && !paused && cell_at(x, y)) { longFired = true; board_click(x, y, true); invalidate(); }
+    }, 450);
+  }
+  invalidate();
+});
+const endPress = () => { ptr_down = false; clearTimeout(longTimer); invalidate(); };
+window.addEventListener("pointerup", endPress);
+window.addEventListener("pointercancel", endPress);
+cv.addEventListener("pointermove", e => {
+  const [x, y] = toGame(e);
+  if (longTimer && Math.hypot(x - mouse_x, y - mouse_y) > 8) clearTimeout(longTimer);
+  mouse_x = x; mouse_y = y;
+  if (pointer_on) update_pointer();
+  invalidate();
+});
+cv.addEventListener("pointerleave", () => {
+  mouse_x = mouse_y = null;
+  if (pointer_on) { ptr_trail = []; ptr_prev = null; ptr_xv = ptr_yv = 0; }
+  invalidate();
+});
+cv.addEventListener("click", e => {
+  if (state === "terminal") { kb.focus(); return; }
+  if (longFired) { longFired = false; return; }
+  const [x, y] = toGame(e);
+  on_click(x, y);
+});
+cv.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  if (lastPointerType !== "mouse") return;            // touch long-press is handled by the timer
+  if (state === "playing" && !paused) { const [x, y] = toGame(e); board_click(x, y, true); invalidate(); }
+});
+window.addEventListener("keydown", e => {
+  if (state === "terminal") { if (document.activeElement !== kb && !term_busy) kb.focus(); return; }
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (e.repeat || state !== "playing") return;
+    if (paused) quit_to_menu(); else toggle_pause();
+    invalidate();
+  }
+});
+
+show_terminal();
+kb.focus();
+</script>
+</body>
+</html>
