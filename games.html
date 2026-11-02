@@ -110,3 +110,34 @@
   });
 </script>
 
+<style>
+  .ms-btn {
+    font-size: 1.4rem;
+    font-weight: bold;
+    padding: 18px 36px;
+    margin: 6px 6px 6px 0;
+    cursor: pointer;
+  }
+  #ms-frame {
+    display: block;
+    width: 100%;
+    max-width: 640px;
+    aspect-ratio: 1 / 1;
+    border: 0;
+  }
+</style>
+
+<button id="ms-load" class="ms-btn">LOAD SIMPLE MINESWEEPER</button>
+<iframe id="ms-frame" title="SIMPLE MINESWEEPER" allow="fullscreen" hidden></iframe>
+
+<script>
+  const msLoad = document.getElementById("ms-load");
+  const msFrame = document.getElementById("ms-frame");
+
+  msLoad.addEventListener("click", () => {
+    msFrame.src = "minesweeper/index.html";   // your minesweeper folder
+    msFrame.hidden = false;
+    msLoad.hidden = true;
+    msFrame.addEventListener("load", () => msFrame.contentWindow.focus(), { once: true });
+  });
+</script>
